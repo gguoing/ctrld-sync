@@ -314,56 +314,38 @@ def push_rules(
 # --------------------------------------------------------------------------- #
 # 4. Main workflow
 # --------------------------------------------------------------------------- #
-def sync_profile(profile_id: str) -> bool:
-    """One-shot sync: delete old, create new, push rules. Returns True if successful."""
-    try:
-        # Fetch all folder data first
-        folder_data_list = []
-        for url in FOLDER_URLS:
-            try:
-                folder_data_list.append(fetch_folder_data(url))
-            except (httpx.HTTPError, KeyError) as e:
-                log.error(f"Failed to fetch folder data from {url}: {e}")
-                continue
-        
-        if not folder_data_list:
-            log.error("No valid folder data found")
-            return False
-        
-        # Get existing folders and delete target folders
-        existing_folders = list_existing_folders(profile_id)
-        for folder_data in folder_data_list:
-            name = folder_data["group"]["group"].strip()
-            if name in existing_folders:
-                delete_folder(profile_id, name, existing_folders[name])
-        
-        # Get all existing rules AFTER deleting target folders
-        existing_rules = get_all_existing_rules(profile_id)
-        
-        # Create new folders and push rules
-        success_count = 0
-        for folder_data in folder_data_list:
-            grp = folder_data["group"]
-            name = grp["group"].strip()
+def sync_profile(profile_id: str) -> None:
+    """One-shot sync: delete old, create new, push rules."""
+    wanted_names = [fetch_folder_name(u) for u in FOLDER_URLS]
+
+    existing = list_existing_folders(profile_id)
+    for name in wanted_names:
+        try:
+            if name in existing:
+                delete_folder(profile_id, name, existing[name])
+        except Exception as e:
+            log.error("Skipping deletion of folder '%s' due to error: %s", name, str(e))
+            continue
+
+    for url in FOLDER_URLS:
+        try:
+            js = _gh_get(url)
+            grp = js["group"]
+            folder_name = grp["group"]
             do = grp["action"]["do"]
             status = grp["action"]["status"]
-            hostnames = [r["PK"] for r in folder_data.get("rules", []) if r.get("PK")]
-            
-            folder_id = create_folder(profile_id, name, do, status)
-            if folder_id and push_rules(profile_id, name, folder_id, do, status, hostnames, existing_rules):
-                success_count += 1
-                # Note: existing_rules is updated within push_rules function
-            
-            # Optional: Refresh existing rules after each folder (more thorough but slower)
-            # existing_rules = get_all_existing_rules(profile_id)
-        
-        log.info(f"Sync complete: {success_count}/{len(folder_data_list)} folders processed successfully")
-        return success_count == len(folder_data_list)
-    
-    except Exception as e:
-        log.error(f"Unexpected error during sync for profile {profile_id}: {e}")
-        return False
+            hostnames = [r["PK"] for r in js.get("rules", []) if r.get("PK")]
 
+            folder_id = create_folder(profile_id, folder_name, do, status)
+            if hostnames:
+                push_rules(profile_id, folder_name, folder_id, do, status, hostnames)
+            else:
+                log.info("Folder '%s' - no rules to push", folder_name)
+        except Exception as e:
+            log.error("Skipping folder from URL '%s' due to error: %s", url, str(e))
+            continue
+
+    log.info("Sync complete ✔")
 
 # --------------------------------------------------------------------------- #
 # 5. Entry-point
