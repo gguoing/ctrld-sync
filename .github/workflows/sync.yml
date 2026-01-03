@@ -3,7 +3,7 @@ name: Sync
 on:
   # Daily at 02:00 UTC
   schedule:
-    - cron: "0 2,14 * * *"
+    - cron: "0 2 * * *"
   # Manual trigger
   workflow_dispatch:
 
